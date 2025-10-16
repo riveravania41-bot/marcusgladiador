@@ -1,6 +1,4 @@
 // api/chat.js
-import fetch from "node-fetch";
-
 export async function handler(event) {
   if (event.httpMethod !== "POST") {
     return { statusCode: 405, body: "Método no permitido" };
@@ -35,6 +33,9 @@ export async function handler(event) {
       body: JSON.stringify({ reply })
     };
   } catch (err) {
-    return { statusCode: 500, body: JSON.stringify({ error: err.message }) };
+    return {
+      statusCode: 500,
+      body: JSON.stringify({ error: err.message })
+    };
   }
 }

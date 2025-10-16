@@ -1,0 +1,311 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Marcus, Gladiador — Chat educativo con voz (Debugged)</title>
+  <style>
+    :root{--bg:#0f1724;--card:#0b1220;--accent:#f59e0b;--muted:#94a3b8}
+    html,body{height:100%;margin:0;font-family:Inter, system-ui, -apple-system, 'Segoe UI', Roboto, Arial}
+    body{background:#07102a;display:flex;align-items:center;justify-content:center;padding:20px;color:#e6eef8}
+    .app{width:100%;max-width:980px;background:rgba(255,255,255,0.02);border-radius:12px;overflow:hidden;display:grid;grid-template-columns:340px 1fr}
+    .sidebar{padding:18px;display:flex;flex-direction:column;gap:12px}
+    .avatar{width:86px;height:86px;border-radius:12px;overflow:hidden;background:linear-gradient(180deg,#ffffff10,#ffffff06);display:flex;align-items:center;justify-content:center}
+    .title{font-size:18px;font-weight:700}
+    .subtitle{font-size:13px;color:var(--muted)}
+    .pill{background:#081625;padding:8px;border-radius:10px;font-size:13px;color:var(--muted)}
+    .main{display:flex;flex-direction:column;height:640px}
+    .chat{flex:1;padding:18px;display:flex;flex-direction:column;gap:12px;overflow:auto}
+    .msg{max-width:78%;padding:10px 12px;border-radius:12px;line-height:1.3}
+    .msg.user{align-self:flex-end;background:#111827;color:#fff}
+    .msg.bot{align-self:flex-start;background:#04202b;color:#e6f7ff}
+    .composer{display:flex;gap:10px;padding:14px;border-top:1px solid rgba(255,255,255,0.02)}
+    textarea{flex:1;min-height:48px;max-height:140px;padding:10px 12px;border-radius:10px;background:transparent;border:1px solid rgba(255,255,255,0.04);color:inherit}
+    .send{background:linear-gradient(90deg,var(--accent),#f97316);border:none;padding:10px 14px;border-radius:10px;color:#06111a;font-weight:700;cursor:pointer}
+    .meta{font-size:12px;color:var(--muted)}
+    .controls{display:flex;gap:8px;align-items:center}
+    .status{font-size:13px;color:var(--muted);background:#081b2c;padding:8px;border-radius:8px}
+    .diag{font-size:13px;color:#fca5a5;background:#2b0a0a;padding:8px;border-radius:8px}
+  </style>
+</head>
+<body>
+  <div class="app" role="application">
+    <aside class="sidebar">
+      <div style="display:flex;gap:12px;align-items:center">
+        <div class="avatar" aria-hidden="true"> <!-- simple avatar SVG -->
+          <svg width="86" height="86" viewBox="0 0 120 120" xmlns="http://www.w3.org/2000/svg">
+            <rect rx="12" width="120" height="120" fill="#071428" />
+            <g transform="translate(14,12)">
+              <circle cx="46" cy="34" r="24" fill="#fce8d6" />
+              <path d="M8 24c8-12 76-12 84 0v6H8z" fill="#f59e0b"/>
+            </g>
+          </svg>
+        </div>
+        <div>
+          <div class="title">Marcus, Gladiador</div>
+          <div class="subtitle">Guía didáctica — Antigua Roma</div>
+        </div>
+      </div>
+
+      <div class="pill">Tono: didáctico y amable • Voz: activada</div>
+
+      <div class="status" id="status">Estado: listo (sin conexión al backend)</div>
+
+      <div style="margin-top:8px">
+        <label for="endpoint">Endpoint:</label><br>
+        <input id="endpoint" type="text" value="/api/chat" style="width:100%;padding:8px;border-radius:6px;background:#071225;border:1px solid rgba(255,255,255,0.04);color:inherit" />
+      </div>
+
+      <div style="margin-top:8px">
+        <label for="method">Método HTTP:</label><br>
+        <select id="method" style="width:100%;padding:8px;border-radius:6px;background:#071225;border:1px solid rgba(255,255,255,0.04);color:inherit">
+          <option value="POST">POST (recomendado)</option>
+          <option value="GET">GET (fallback)</option>
+        </select>
+      </div>
+
+      <div style="margin-top:8px" class="controls">
+        <button id="testBtn" class="send" style="padding:8px 10px">Probar endpoint</button>
+        <button id="toggleVoice" class="send" style="padding:8px 10px;background:#9ca3af;color:#000">Desactivar voz</button>
+      </div>
+
+      <div style="margin-top:10px" class="example"><strong>Consejo si ves 405:</strong>
+        <ul style="margin:6px 0 0 16px;padding:0;color:var(--muted)">
+          <li>Verifica que tu servidor acepta POST en la ruta indicada.</li>
+          <li>Si no, selecciona GET como método y prueba nuevamente.</li>
+          <li>Revisa la consola del servidor para detalles (CORS o rutas).</li>
+        </ul>
+      </div>
+
+      <div style="flex:1"></div>
+      <div id="diag" class="diag" style="display:none"></div>
+    </aside>
+
+    <main class="main">
+      <div class="chat" id="chat" role="log" aria-live="polite"></div>
+
+      <div class="composer">
+        <textarea id="input" placeholder="Escribe tu pregunta para Marcus... (ej. ¿Cómo entrenaba un gladiador?)"></textarea>
+        <button id="send" class="send">Enviar</button>
+      </div>
+      <footer style="padding:12px;text-align:center"><span class="meta">Versión debug • Incluye fallback GET y diagnóstico para error 405.</span></footer>
+    </main>
+  </div>
+
+  <script>
+    // Default config
+    const endpointInput = document.getElementById('endpoint');
+    const methodSelect = document.getElementById('method');
+    const statusEl = document.getElementById('status');
+    const diagEl = document.getElementById('diag');
+
+    const SYSTEM_PROMPT = `Eres Marcus, un gladiador romano didáctico y amable. Responde en español claro, adaptado a estudiantes, usando datos históricos reales sobre la Antigua Roma. Mantén explicaciones cortas (2-4 frases). Si no estás seguro, di \"No hay evidencia clara, pero...\".`;
+
+    const chatEl = document.getElementById('chat');
+    const input = document.getElementById('input');
+    const send = document.getElementById('send');
+    const testBtn = document.getElementById('testBtn');
+    const toggleVoiceBtn = document.getElementById('toggleVoice');
+
+    let voiceEnabled = true;
+
+    function appendMessage(text, who){
+      const el = document.createElement('div');
+      el.className = 'msg ' + (who === 'user' ? 'user' : 'bot');
+      el.textContent = text;
+      chatEl.appendChild(el);
+      chatEl.scrollTop = chatEl.scrollHeight - chatEl.clientHeight;
+    }
+
+    appendMessage('¡Salve! Soy Marcus, tu guía gladiador. Pregúntame lo que quieras sobre la vida en la Antigua Roma.', 'bot');
+
+    async function callBackendPOST(url, payload){
+      const res = await fetch(url, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload)});
+      return res;
+    }
+
+    async function callBackendGET(url, payload){
+      // Encode minimal payload into query params (watch URL length limits)
+      const params = new URLSearchParams();
+      params.set('system', payload.system);
+      // only send the user message for brevity
+      const userMsg = payload.messages && payload.messages.length ? payload.messages[payload.messages.length-1].content : '';
+      params.set('user', userMsg);
+      const fullUrl = url + '?' + params.toString();
+      const res = await fetch(fullUrl, {method: 'GET'});
+      return res;
+    }
+
+    async function askQuestion(text){
+      appendMessage(text, 'user');
+      appendMessage('Marcus está pensando…', 'bot');
+
+      const payload = { system: SYSTEM_PROMPT, messages: [{role:'system', content: SYSTEM_PROMPT}, {role:'user', content: text}] };
+      const url = endpointInput.value.trim() || '/api/chat';
+      const method = methodSelect.value || 'POST';
+
+      try{
+        statusEl.textContent = `Estado: contactando ${url} con ${method}`;
+        diagEl.style.display = 'none';
+
+        let res;
+        if(method === 'POST'){
+          res = await callBackendPOST(url, payload);
+        }else{
+          res = await callBackendGET(url, payload);
+        }
+
+        if(res.status === 405){
+          // Try automatic fallback: if POST failed, try GET
+          if(method === 'POST'){
+            statusEl.textContent = `Estado: 405 recibido. Probando GET como fallback...`;
+            res = await callBackendGET(url, payload);
+          }
+        }
+
+        if(!res.ok){
+          // show detailed diagnostic for debugging
+          const textBody = await res.text().catch(()=>null);
+          throw {status: res.status, statusText: res.statusText, body: textBody};
+        }
+
+        // Expecting JSON like { reply: '...' }
+        const data = await res.json();
+        const botReply = data && data.reply ? data.reply : (data && data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content) || 'Lo siento, no obtuve respuesta.';
+
+        // Replace thinking message
+        const thinking = Array.from(chatEl.querySelectorAll('.msg.bot')).pop();
+        if(thinking) thinking.textContent = botReply;
+        chatEl.scrollTop = chatEl.scrollHeight - chatEl.clientHeight;
+
+        if (voiceEnabled && botReply) speak(botReply);
+        statusEl.textContent = `Estado: respuesta recibida (${res.status})`;
+
+      }catch(err){
+        console.error('Error backend:', err);
+        const thinking = Array.from(chatEl.querySelectorAll('.msg.bot')).pop();
+        if(thinking) thinking.textContent = 'Ups — hubo un problema al contactar al servicio.';
+        diagEl.style.display = 'block';
+        diagEl.textContent = `Detalle: ${err && err.status ? err.status + ' ' + (err.statusText||'') : ''} ${err && err.body ? '\n' + err.body : ''}`;
+        statusEl.textContent = 'Estado: error al contactar backend (ver diagnóstico)';
+      }
+    }
+
+    // --- Text-to-Speech ---
+    function speak(text){
+      if(!voiceEnabled) return;
+      try{
+        window.speechSynthesis.cancel();
+        const u = new SpeechSynthesisUtterance(text);
+        u.lang = 'es-ES';
+        u.rate = 0.95;
+        u.pitch = 1.05;
+        // try to pick an spanish voice
+        const voices = window.speechSynthesis.getVoices();
+        const v = voices.find(v=>v.lang.startsWith('es') && /male|hombre|masculino/i.test(v.name)) || voices.find(v=>v.lang.startsWith('es'));
+        if(v) u.voice = v;
+        window.speechSynthesis.speak(u);
+      }catch(e){ console.warn('TTS failed', e); }
+    }
+
+    // UI bindings
+    send.addEventListener('click', ()=>{ const text = input.value.trim(); if(!text) return; askQuestion(text); input.value = ''; input.focus(); });
+    input.addEventListener('keydown', (e)=>{ if(e.key === 'Enter' && !e.shiftKey){ e.preventDefault(); send.click(); } });
+
+    testBtn.addEventListener('click', async ()=>{
+      // small test ping using current method
+      const url = endpointInput.value.trim() || '/api/chat';
+      const method = methodSelect.value || 'POST';
+      statusEl.textContent = `Estado: probando ${method} ${url} ...`;
+      diagEl.style.display = 'none';
+      try{
+        const payload = { system: SYSTEM_PROMPT, messages: [{role:'user', content:'Ping desde el cliente para probar endpoint.'}] };
+        let res = method === 'POST' ? await callBackendPOST(url, payload) : await callBackendGET(url, payload);
+        if(res.status === 405 && method === 'POST'){
+          // server doesn't accept POST — suggest switching to GET or fix server
+          statusEl.textContent = 'Estado: 405 recibido. Prueba cambiar a GET o revisar servidor.';
+        }else if(!res.ok){
+          const body = await res.text().catch(()=>null);
+          statusEl.textContent = `Estado: respuesta ${res.status}`;
+          diagEl.style.display = 'block';
+          diagEl.textContent = `Respuesta: ${res.status} ${res.statusText}\n${body || ''}`;
+        }else{
+          statusEl.textContent = `Estado: endpoint OK (${res.status})`;
+        }
+      }catch(e){
+        console.error(e);
+        statusEl.textContent = 'Estado: error al probar endpoint (ver consola)';
+        diagEl.style.display = 'block';
+        diagEl.textContent = String(e);
+      }
+    });
+
+    toggleVoiceBtn.addEventListener('click', ()=>{
+      voiceEnabled = !voiceEnabled;
+      toggleVoiceBtn.textContent = voiceEnabled ? 'Desactivar voz' : 'Activar voz';
+      toggleVoiceBtn.style.background = voiceEnabled ? '#9ca3af' : 'linear-gradient(90deg,var(--accent),#f97316)';
+    });
+
+    // Ensure voices are loaded for TTS selection in some browsers
+    window.speechSynthesis.onvoiceschanged = ()=>{ /* no-op, triggers loading */ };
+  </script>
+
+  <!--
+    Ejemplo de servidor (Node.js + Express) — Asegúrate de que acepta POST en /api/chat.
+    Este ejemplo también incluye un handler GET para compatibilidad si tu hosting no permite POST.
+
+    server.js (ejemplo):
+
+    const express = require('express');
+    const bodyParser = require('body-parser');
+    const cors = require('cors');
+    const { Configuration, OpenAIApi } = require('openai');
+    require('dotenv').config();
+
+    const app = express();
+    app.use(cors());
+    app.use(bodyParser.json());
+    app.use(express.static('public'));
+
+    const config = new Configuration({ apiKey: process.env.OPENAI_API_KEY });
+    const client = new OpenAIApi(config);
+
+    // POST handler (recomendado)
+    app.post('/api/chat', async (req, res) => {
+      try{
+        const { system, messages } = req.body;
+        const conv = [ {role: 'system', content: system || ''}, ...(messages || []) ];
+        const completion = await client.createChatCompletion({ model: 'gpt-4o-mini', messages: conv, max_tokens: 500 });
+        const reply = completion.data.choices[0].message.content.trim();
+        res.json({ reply });
+      }catch(e){
+        console.error(e);
+        res.status(500).json({ error: 'Error generando respuesta' });
+      }
+    });
+
+    // GET fallback handler (permite hosting que no acepte POST)
+    // Query params: ?system=...&user=...
+    app.get('/api/chat', async (req, res) => {
+      try{
+        const system = req.query.system || '';
+        const user = req.query.user || '';
+        const conv = [ {role: 'system', content: system}, {role: 'user', content: user} ];
+        const completion = await client.createChatCompletion({ model: 'gpt-4o-mini', messages: conv, max_tokens: 500 });
+        const reply = completion.data.choices[0].message.content.trim();
+        res.json({ reply });
+      }catch(e){
+        console.error(e);
+        res.status(500).json({ error: 'Error generando respuesta (GET)' });
+      }
+    });
+
+    const PORT = process.env.PORT || 3000;
+    app.listen(PORT, ()=> console.log(`Servidor escuchando en http://localhost:${PORT}`));
+
+    Notas:
+    - Si tu servidor devuelve 405 para POST, asegúrate de que la ruta y método estén implementados y que no exista un proxy o firewall que transforme o bloquee el método.
+    - Si tu hosting no permite POST desde páginas estáticas, usa el handler GET como fallback (aunque recuerda que GET tiene limitaciones de longitud y seguridad).
+  -->
+</body>
+</html>
